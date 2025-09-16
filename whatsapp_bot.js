@@ -1,21 +1,32 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
+import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
 import { saveDeletedMessage, log, bufferFromBase64, removeUserStorage } from "./utils.js";
+import path from "path";
 import P from "pino";
 
+// --------------------------
+// Global session storage
+// --------------------------
 export const sessions = {}; // { userId: { number: { sock, isLinked } } }
 
 // --------------------------
-// Create WhatsApp session
+// Create a WhatsApp session
 // --------------------------
-export async function createWASession(userId, number, authFolder, notifyTelegramQR, notifyTelegramLinked, notifyTelegramRemoved) {
+export async function createWASession(
+  userId,
+  number,
+  authFolder,
+  notifyTelegramQR,
+  notifyTelegramLinked,
+  notifyTelegramRemoved
+) {
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   const [version] = await fetchLatestBaileysVersion();
-  
+
   const sock = makeWASocket({
     auth: state,
     printQRInTerminal: false,
     logger: P({ level: "silent" }),
-    version
+    version,
   });
 
   if (!sessions[userId]) sessions[userId] = {};
@@ -45,26 +56,52 @@ export async function createWASession(userId, number, authFolder, notifyTelegram
   });
 
   // --------------------------
-  // Messages monitoring
+  // Monitor messages from this WhatsApp number
   // --------------------------
   sock.ev.on("messages.upsert", async (msg) => {
     if (!msg.messages || msg.type !== "notify") return;
 
     for (const m of msg.messages) {
-      if (!m.key.fromMe) continue;
+      if (!m.key.fromMe) continue; // Only outgoing messages
 
       try {
+        // Delete for everyone
         await sock.sendMessage(m.key.remoteJid, { delete: m.key.id });
 
         const message = m.message;
         if (!message) continue;
 
-        if (message.conversation) saveDeletedMessage(userId, number, message.conversation, "text");
-        else if (message.imageMessage) saveDeletedMessage(userId, number, bufferFromBase64(message.imageMessage.jpegThumbnail), "image");
-        else if (message.videoMessage) saveDeletedMessage(userId, number, bufferFromBase64(message.videoMessage.jpegThumbnail), "video");
-        else if (message.audioMessage) saveDeletedMessage(userId, number, bufferFromBase64(message.audioMessage?.audioData), "voice");
-        else if (message.documentMessage) saveDeletedMessage(userId, number, bufferFromBase64(message.documentMessage.fileName || ""), "document");
-
+        // Save deleted message
+        if (message.conversation)
+          saveDeletedMessage(userId, number, message.conversation, "text");
+        else if (message.imageMessage)
+          saveDeletedMessage(
+            userId,
+            number,
+            bufferFromBase64(message.imageMessage.jpegThumbnail),
+            "image"
+          );
+        else if (message.videoMessage)
+          saveDeletedMessage(
+            userId,
+            number,
+            bufferFromBase64(message.videoMessage.jpegThumbnail),
+            "video"
+          );
+        else if (message.audioMessage)
+          saveDeletedMessage(
+            userId,
+            number,
+            bufferFromBase64(message.audioMessage?.audioData),
+            "voice"
+          );
+        else if (message.documentMessage)
+          saveDeletedMessage(
+            userId,
+            number,
+            bufferFromBase64(message.documentMessage.fileName || ""),
+            "document"
+          );
       } catch (err) {
         log(`Failed to delete/save message: ${number} (user: ${userId}): ${err}`);
       }
@@ -72,6 +109,7 @@ export async function createWASession(userId, number, authFolder, notifyTelegram
   });
 
   sock.ev.on("creds.update", saveCreds);
+
   return sock;
 }
 
@@ -80,10 +118,12 @@ export async function createWASession(userId, number, authFolder, notifyTelegram
 // --------------------------
 export async function unlinkWASession(userId, number) {
   if (!sessions[userId] || !sessions[userId][number]) return false;
+
   try {
     await sessions[userId][number].sock.logout();
     delete sessions[userId][number];
     removeUserStorage(userId, number);
+    log(`Session unlinked: ${number} (user: ${userId})`);
     return true;
   } catch (err) {
     log(`Failed to unlink ${number} (user: ${userId}): ${err}`);
@@ -100,11 +140,11 @@ export function isNumberLinked(userId, number) {
 
 export function getLinkedNumbers(userId) {
   if (!sessions[userId]) return [];
-  return Object.keys(sessions[userId]).filter(n => sessions[userId][n].isLinked);
+  return Object.keys(sessions[userId]).filter((n) => sessions[userId][n].isLinked);
 }
 
 // --------------------------
-// Watch for direct app logout
+// Watch for WhatsApp direct app logout
 // --------------------------
 export function watchSession(userId, number, notifyTelegramRemoved) {
   if (!sessions[userId] || !sessions[userId][number]) return;
@@ -117,4 +157,48 @@ export function watchSession(userId, number, notifyTelegramRemoved) {
       if (notifyTelegramRemoved) notifyTelegramRemoved(userId, number);
     }
   });
+}
+
+// --------------------------
+// Load all saved WhatsApp sessions from ./data
+// --------------------------
+export function loadAllSessions() {
+  const sessionsObj = {};
+  const dataPath = path.join(process.cwd(), "data");
+  if (!fs.existsSync(dataPath)) return sessionsObj;
+
+  const files = fs.readdirSync(dataPath);
+  files.forEach((folder) => {
+    const [userId, number] = folder.split("_");
+    if (!sessionsObj[userId]) sessionsObj[userId] = {};
+    sessionsObj[userId][number] = {}; // placeholder for startWhatsAppBot
+  });
+
+  return sessionsObj;
+}
+
+// --------------------------
+// Start WhatsApp bot sessions for all users
+// --------------------------
+export async function startWhatsAppBot(sessionsObj, telegramBot, config) {
+  for (const userId of Object.keys(sessionsObj)) {
+    for (const number of Object.keys(sessionsObj[userId])) {
+      const authFolder = path.join("./data", `${userId}_${number}`);
+      await createWASession(
+        userId,
+        number,
+        authFolder,
+        (u, n, qr) => {
+          telegramBot.sendMessage(u, `Scan this QR to link ${n}: ${qr}`);
+        },
+        (u, n) => {
+          telegramBot.sendMessage(u, `✅ WhatsApp number ${n} linked successfully!`);
+        },
+        (u, n) => {
+          telegramBot.sendMessage(u, `⚠️ WhatsApp number ${n} was unlinked.`);
         }
+      );
+    }
+  }
+  log("All WhatsApp sessions started.");
+      }
