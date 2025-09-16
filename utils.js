@@ -6,13 +6,21 @@ import crypto from "crypto";
 // Paths
 // --------------------------
 const superHousePath = "./superHouse";
-const passkeysPath = "./data/activePasskeys.json";
+const dataFolderPath = "./data";
+const passkeysPath = path.join(dataFolderPath, "activePasskeys.json");
 const logsPath = "./logs";
 
+// --------------------------
 // Ensure folders exist
-[superHousePath, path.dirname(passkeysPath), logsPath].forEach(dir => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-});
+// --------------------------
+export function ensureDataFolder() {
+  [superHousePath, dataFolderPath, logsPath].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  });
+}
+
+// Call immediately to ensure folders exist
+ensureDataFolder();
 
 // --------------------------
 // Logging
@@ -88,7 +96,6 @@ export function saveDeletedMessage(userId, number, message, type = "text") {
   }
 }
 
-// Retrieve messages for a user-number
 export function getDeletedMessages(userId, number) {
   const numberPath = path.join(superHousePath, `${userId}`, `${number}`);
   if (!fs.existsSync(numberPath)) return [];
@@ -99,7 +106,6 @@ export function getDeletedMessages(userId, number) {
   }));
 }
 
-// Delete all messages for a number
 export function clearDeletedMessages(userId, number) {
   const numberPath = path.join(superHousePath, `${userId}`, `${number}`);
   if (!fs.existsSync(numberPath)) return;
