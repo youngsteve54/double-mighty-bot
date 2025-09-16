@@ -1,7 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { createWASession, unlinkWASession } from './whatsapp_bot.js'; // fixed import
+import { createWASession, unlinkWASession } from './whatsapp_bot.js';
 import { generatePasskey } from './utils.js';
-import config from './config.json';
+import config from './config.json' assert { type: "json" };
 
 const botToken = config.botToken || process.env.BOT_TOKEN;
 if (!botToken) process.exit(1);
@@ -20,7 +20,6 @@ function sendUnauthorized(userId) {
     bot.sendMessage(userId, "You are not authorized to use this bot.");
 }
 
-// --------------------- START /start ---------------------
 bot.onText(/\/start/, (msg) => {
     const userId = msg.from.id;
     const username = msg.from.username || msg.from.first_name;
@@ -33,24 +32,21 @@ bot.onText(/\/start/, (msg) => {
     if (pendingUsers[userId]) return;
 
     pendingUsers[userId] = { username };
-    const opts = {
+    bot.sendMessage(config.adminId, `New user @${username} (${userId}) wants access.`, {
         reply_markup: {
             inline_keyboard: [
                 [{ text: 'Grant', callback_data: `grant_${userId}` },
                  { text: 'Ignore', callback_data: `ignore_${userId}` }]
             ]
         }
-    };
-    bot.sendMessage(config.adminId, `New user @${username} (${userId}) wants access.`, opts);
+    });
     bot.sendMessage(userId, "Please wait for admin approval.");
 });
 
-// ------------------ CALLBACK QUERIES -------------------
 bot.on('callback_query', async (query) => {
     const data = query.data;
     const fromId = query.from.id;
 
-    // ---------------- ADMIN APPROVAL ----------------
     if (data.startsWith('grant_') || data.startsWith('ignore_')) {
         if (!isAdmin(fromId)) return sendUnauthorized(fromId);
         const targetUserId = data.split('_')[1];
@@ -62,26 +58,21 @@ bot.on('callback_query', async (query) => {
         } else {
             const passkey = generatePasskey();
             bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: fromId, message_id: query.message.message_id });
-
-            const opts = {
+            bot.sendMessage(fromId, `Passkey generated for user ${targetUserId}: ${passkey}`, {
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: 'Send', callback_data: `sendpass_${targetUserId}_${passkey}` },
                          { text: 'Erase', callback_data: `erasepass_${targetUserId}` }]
                     ]
                 }
-            };
-            bot.sendMessage(fromId, `Passkey generated for user ${targetUserId}: ${passkey}`, opts);
+            });
         }
         return;
     }
 
-    // ---------------- SEND OR ERASE PASSKEY ----------------
     if (data.startsWith('sendpass_') || data.startsWith('erasepass_')) {
         if (!isAdmin(fromId)) return sendUnauthorized(fromId);
-        const parts = data.split('_');
-        const targetUserId = parts[1];
-        const passkey = parts[2];
+        const [ , targetUserId, passkey] = data.split('_');
 
         bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: fromId, message_id: query.message.message_id });
 
@@ -96,11 +87,9 @@ bot.on('callback_query', async (query) => {
         return;
     }
 
-    // ---------------- UNLINK ----------------
     if (data.startsWith('unlinkconfirm_') || data.startsWith('unlinkcancel_')) {
-        const parts = data.split('_');
-        const userId = parseInt(parts[1]);
-        const number = parts[2];
+        const [ , uid, number] = data.split('_');
+        const userId = parseInt(uid);
 
         bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: fromId, message_id: query.message.message_id });
 
@@ -111,22 +100,15 @@ bot.on('callback_query', async (query) => {
         bot.sendMessage(userId, `Number ${number} successfully unlinked.`);
     }
 
-    // ---------------- LINK ----------------
     if (data.startsWith('linkqr_') || data.startsWith('linkphone_')) {
-        const parts = data.split('_');
-        const method = parts[0] === 'linkqr' ? 'qr' : 'phone';
-        const number = parts[1];
-
+        const [methodKey, number] = data.split('_');
+        const method = methodKey === 'linkqr' ? 'qr' : 'phone';
         bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: fromId, message_id: query.message.message_id });
-        try {
-            await createWASession(number, method, fromId, bot);
-        } catch (err) {
-            bot.sendMessage(fromId, `Failed to link ${number}. Try again.`);
-        }
+        try { await createWASession(number, method, fromId, bot); } 
+        catch { bot.sendMessage(fromId, `Failed to link ${number}. Try again.`); }
     }
 });
 
-// ---------------- VERIFY PASSKEY -----------------
 bot.onText(/\/verify (.+)/, (msg, match) => {
     const userId = msg.from.id;
     const inputKey = match[1];
@@ -139,7 +121,6 @@ bot.onText(/\/verify (.+)/, (msg, match) => {
     bot.sendMessage(userId, "Access granted! You can now use the bot.");
 });
 
-// ---------------- LINK NUMBER -----------------
 bot.onText(/\/link/, (msg) => {
     const userId = msg.from.id;
     if (!authorizedUsers[userId]?.verified) return sendUnauthorized(userId);
@@ -150,21 +131,18 @@ bot.onText(/\/link/, (msg) => {
         if (reply.from.id !== userId) return;
         const number = reply.text.trim();
         bot.removeListener('message', listener);
-
-        const opts = {
+        bot.sendMessage(userId, `Choose linking method for ${number}:`, {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: 'QR Code', callback_data: `linkqr_${number}` },
                      { text: 'Phone Pairing', callback_data: `linkphone_${number}` }]
                 ]
             }
-        };
-        bot.sendMessage(userId, `Choose linking method for ${number}:`, opts);
+        });
     };
     bot.on('message', listener);
 });
 
-// ---------------- UNLINK NUMBER -----------------
 bot.onText(/\/unlink/, (msg) => {
     const userId = msg.from.id;
     if (!authorizedUsers[userId]?.verified) return sendUnauthorized(userId);
@@ -176,7 +154,6 @@ bot.onText(/\/unlink/, (msg) => {
     bot.sendMessage(userId, "Select a number to unlink:", { reply_markup: { inline_keyboard: buttons } });
 });
 
-// ---------------- VIEW DELETED MESSAGES -----------------
 bot.onText(/\/view/, (msg) => {
     const userId = msg.from.id;
     if (!authorizedUsers[userId]?.verified) return sendUnauthorized(userId);
@@ -188,7 +165,6 @@ bot.onText(/\/view/, (msg) => {
     bot.sendMessage(userId, "Select a number to view deleted messages:", { reply_markup: { inline_keyboard: buttons } });
 });
 
-// ---------------- ADMIN COMMUNICATION -----------------
 function handleAdminCommunication(data, botInstance) {
     if (data.startsWith('disconnect')) {
         Object.keys(activeChats).forEach(chatId => delete activeChats[chatId]);
@@ -211,15 +187,11 @@ function handleAdminCommunication(data, botInstance) {
     }
 }
 
-// ---------------- MESSAGE LISTENER -----------------
 bot.on('message', (msg) => {
     const userId = msg.from.id;
-
     if (activeChats[userId]) {
         const chatType = activeChats[userId].type;
-        if (chatType === 'broadcast' || chatType === 'direct') {
-            bot.sendMessage(config.adminId, `From ${userId} (${msg.from.username || msg.from.first_name}): ${msg.text || '[media]'}`);
-        }
+        bot.sendMessage(config.adminId, `From ${userId} (${msg.from.username || msg.from.first_name}): ${msg.text || '[media]'}`);
     }
 });
 
