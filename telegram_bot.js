@@ -1,9 +1,9 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { createWASession, unlinkWASession } from './whatsappBot.js';
+import { createWASession, unlinkWASession } from './whatsapp_bot.js'; // fixed import
 import { generatePasskey } from './utils.js';
 import config from './config.json';
 
-const botToken = config.token || process.env.BOT_TOKEN;
+const botToken = config.botToken || process.env.BOT_TOKEN;
 if (!botToken) process.exit(1);
 
 const bot = new TelegramBot(botToken, { polling: true });
@@ -20,6 +20,7 @@ function sendUnauthorized(userId) {
     bot.sendMessage(userId, "You are not authorized to use this bot.");
 }
 
+// --------------------- START /start ---------------------
 bot.onText(/\/start/, (msg) => {
     const userId = msg.from.id;
     const username = msg.from.username || msg.from.first_name;
@@ -44,10 +45,12 @@ bot.onText(/\/start/, (msg) => {
     bot.sendMessage(userId, "Please wait for admin approval.");
 });
 
+// ------------------ CALLBACK QUERIES -------------------
 bot.on('callback_query', async (query) => {
     const data = query.data;
     const fromId = query.from.id;
 
+    // ---------------- ADMIN APPROVAL ----------------
     if (data.startsWith('grant_') || data.startsWith('ignore_')) {
         if (!isAdmin(fromId)) return sendUnauthorized(fromId);
         const targetUserId = data.split('_')[1];
@@ -73,6 +76,7 @@ bot.on('callback_query', async (query) => {
         return;
     }
 
+    // ---------------- SEND OR ERASE PASSKEY ----------------
     if (data.startsWith('sendpass_') || data.startsWith('erasepass_')) {
         if (!isAdmin(fromId)) return sendUnauthorized(fromId);
         const parts = data.split('_');
@@ -85,13 +89,14 @@ bot.on('callback_query', async (query) => {
             bot.sendMessage(fromId, `Passkey erased for user ${targetUserId}.`);
             bot.sendMessage(targetUserId, `Admin erased your access request.`);
         } else {
-            authorizedUsers[targetUserId] = { passkey, numbers: [], verified: false };
+            authorizedUsers[targetUserId] = { passkey, numbers: [], verified: false, messages: {} };
             delete pendingUsers[targetUserId];
             bot.sendMessage(targetUserId, `Your passkey is: ${passkey}\nSend /verify <passkey> to unlock access.`);
         }
         return;
     }
 
+    // ---------------- UNLINK ----------------
     if (data.startsWith('unlinkconfirm_') || data.startsWith('unlinkcancel_')) {
         const parts = data.split('_');
         const userId = parseInt(parts[1]);
@@ -106,8 +111,22 @@ bot.on('callback_query', async (query) => {
         bot.sendMessage(userId, `Number ${number} successfully unlinked.`);
     }
 
+    // ---------------- LINK ----------------
+    if (data.startsWith('linkqr_') || data.startsWith('linkphone_')) {
+        const parts = data.split('_');
+        const method = parts[0] === 'linkqr' ? 'qr' : 'phone';
+        const number = parts[1];
+
+        bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: fromId, message_id: query.message.message_id });
+        try {
+            await createWASession(number, method, fromId, bot);
+        } catch (err) {
+            bot.sendMessage(fromId, `Failed to link ${number}. Try again.`);
+        }
+    }
 });
 
+// ---------------- VERIFY PASSKEY -----------------
 bot.onText(/\/verify (.+)/, (msg, match) => {
     const userId = msg.from.id;
     const inputKey = match[1];
@@ -120,7 +139,8 @@ bot.onText(/\/verify (.+)/, (msg, match) => {
     bot.sendMessage(userId, "Access granted! You can now use the bot.");
 });
 
-bot.onText(/\/link/, async (msg) => {
+// ---------------- LINK NUMBER -----------------
+bot.onText(/\/link/, (msg) => {
     const userId = msg.from.id;
     if (!authorizedUsers[userId]?.verified) return sendUnauthorized(userId);
 
@@ -143,67 +163,8 @@ bot.onText(/\/link/, async (msg) => {
     };
     bot.on('message', listener);
 });
-bot.on('callback_query', async (query) => {
-    const data = query.data;
-    const userId = query.from.id;
 
-    if (data.startsWith('linkqr_') || data.startsWith('linkphone_')) {
-        const parts = data.split('_');
-        const method = parts[0] === 'linkqr' ? 'qr' : 'phone';
-        const number = parts[1];
-
-        bot.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: userId, message_id: query.message.message_id });
-        try {
-            await createWASession(number, method, userId, bot);
-        } catch (err) {
-            bot.sendMessage(userId, `Failed to link ${number}. Try again.`);
-        }
-    }
-
-    if (data.startsWith('viewmsgs_')) {
-        const number = data.split('_')[1];
-        const msgs = authorizedUsers[userId].messages?.[number] || [];
-        if (msgs.length === 0) return bot.sendMessage(userId, `No deleted messages for ${number}.`);
-
-        const pageSize = 10;
-        let page = 0;
-
-        function sendPage() {
-            const start = page * pageSize;
-            const end = start + pageSize;
-            const pageMsgs = msgs.slice(start, end).join('\n');
-            const buttons = [];
-            if (end < msgs.length) buttons.push([{ text: 'Next', callback_data: `next_${number}_${page + 1}` }]);
-            if (start > 0) buttons.push([{ text: 'Prev', callback_data: `prev_${number}_${page - 1}` }]);
-            if (end >= msgs.length) buttons.push([{ text: 'Delete All', callback_data: `deletemsgs_${number}` }]);
-
-            bot.sendMessage(userId, pageMsgs, { reply_markup: { inline_keyboard: buttons } });
-        }
-        sendPage();
-    }
-
-    if (data.startsWith('next_') || data.startsWith('prev_')) {
-        const parts = data.split('_');
-        const number = parts[1];
-        const newPage = parseInt(parts[2]);
-        page = newPage;
-        bot.deleteMessage(userId, query.message.message_id);
-        sendPage();
-    }
-
-    if (data.startsWith('deletemsgs_')) {
-        const number = data.split('_')[1];
-        delete authorizedUsers[userId].messages[number];
-        bot.sendMessage(userId, `Deleted messages for ${number}.`);
-        bot.deleteMessage(userId, query.message.message_id);
-    }
-
-    if (data.startsWith('adminchat_') || data.startsWith('broadcast_') || data.startsWith('disconnect')) {
-        if (!isAdmin(userId)) return sendUnauthorized(userId);
-        handleAdminCommunication(data, bot);
-    }
-});
-
+// ---------------- UNLINK NUMBER -----------------
 bot.onText(/\/unlink/, (msg) => {
     const userId = msg.from.id;
     if (!authorizedUsers[userId]?.verified) return sendUnauthorized(userId);
@@ -215,6 +176,7 @@ bot.onText(/\/unlink/, (msg) => {
     bot.sendMessage(userId, "Select a number to unlink:", { reply_markup: { inline_keyboard: buttons } });
 });
 
+// ---------------- VIEW DELETED MESSAGES -----------------
 bot.onText(/\/view/, (msg) => {
     const userId = msg.from.id;
     if (!authorizedUsers[userId]?.verified) return sendUnauthorized(userId);
@@ -226,6 +188,7 @@ bot.onText(/\/view/, (msg) => {
     bot.sendMessage(userId, "Select a number to view deleted messages:", { reply_markup: { inline_keyboard: buttons } });
 });
 
+// ---------------- ADMIN COMMUNICATION -----------------
 function handleAdminCommunication(data, botInstance) {
     if (data.startsWith('disconnect')) {
         Object.keys(activeChats).forEach(chatId => delete activeChats[chatId]);
@@ -248,6 +211,7 @@ function handleAdminCommunication(data, botInstance) {
     }
 }
 
+// ---------------- MESSAGE LISTENER -----------------
 bot.on('message', (msg) => {
     const userId = msg.from.id;
 
@@ -256,8 +220,6 @@ bot.on('message', (msg) => {
         if (chatType === 'broadcast' || chatType === 'direct') {
             bot.sendMessage(config.adminId, `From ${userId} (${msg.from.username || msg.from.first_name}): ${msg.text || '[media]'}`);
         }
-    } else if (!authorizedUsers[userId]?.verified && !pendingUsers[userId]) {
-        return;
     }
 });
 
