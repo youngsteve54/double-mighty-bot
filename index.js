@@ -3,8 +3,17 @@ import path from "path";
 import TelegramBot from "node-telegram-bot-api";
 import { startTelegramBot } from "./telegram_bot.js";
 import { startWhatsAppBot, loadAllSessions } from "./whatsapp_bot.js";
-import config from "./config.json" assert { type: "json" };
 import { ensureDataFolder } from "./utils.js";
+
+// --------------------
+// Load config.json safely
+// --------------------
+const configPath = path.join(process.cwd(), "config.json");
+let config = {};
+if (fs.existsSync(configPath)) {
+  const raw = fs.readFileSync(configPath, "utf-8");
+  config = JSON.parse(raw);
+}
 
 // Initialize data storage folder
 ensureDataFolder();
