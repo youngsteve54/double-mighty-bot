@@ -1,4 +1,4 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from "@adiwajshing/baileys";
+import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
 import { saveDeletedMessage, log, bufferFromBase64, removeUserStorage } from "./utils.js";
 import P from "pino";
 
@@ -10,7 +10,13 @@ export const sessions = {}; // { userId: { number: { sock, isLinked } } }
 export async function createWASession(userId, number, authFolder, notifyTelegramQR, notifyTelegramLinked, notifyTelegramRemoved) {
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   const [version] = await fetchLatestBaileysVersion();
-  const sock = makeWASocket({ auth: state, printQRInTerminal: false, logger: P({ level: "silent" }), version });
+  
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: false,
+    logger: P({ level: "silent" }),
+    version
+  });
 
   if (!sessions[userId]) sessions[userId] = {};
   sessions[userId][number] = { sock, isLinked: false };
@@ -33,7 +39,7 @@ export async function createWASession(userId, number, authFolder, notifyTelegram
       const reason = lastDisconnect?.error?.output?.statusCode || "unknown";
       log(`Session closed: ${number} (user: ${userId}) Reason: ${reason}`);
       delete sessions[userId][number];
-      removeUserStorage(userId, number); // Clear storage for deleted messages
+      removeUserStorage(userId, number);
       if (notifyTelegramRemoved) notifyTelegramRemoved(userId, number);
     }
   });
@@ -77,7 +83,7 @@ export async function unlinkWASession(userId, number) {
   try {
     await sessions[userId][number].sock.logout();
     delete sessions[userId][number];
-    removeUserStorage(userId, number); // clear deleted messages
+    removeUserStorage(userId, number);
     return true;
   } catch (err) {
     log(`Failed to unlink ${number} (user: ${userId}): ${err}`);
@@ -111,4 +117,4 @@ export function watchSession(userId, number, notifyTelegramRemoved) {
       if (notifyTelegramRemoved) notifyTelegramRemoved(userId, number);
     }
   });
-}
+        }
