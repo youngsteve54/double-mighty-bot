@@ -107,6 +107,13 @@ export function clearDeletedMessages(userId, number) {
 }
 
 // --------------------------
+// Remove user storage (used for unlinking WA session)
+// --------------------------
+export function removeUserStorage(userId, number) {
+  clearDeletedMessages(userId, number);
+}
+
+// --------------------------
 // Pagination Helper
 // --------------------------
 export function paginate(array, pageSize = 10) {
