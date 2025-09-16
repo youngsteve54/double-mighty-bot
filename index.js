@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
 import TelegramBot from "node-telegram-bot-api";
-import { startTelegramBot } from "./telegram_bot.js";
 import { startWhatsAppBot, loadAllSessions } from "./whatsapp_bot.js";
 import { ensureDataFolder } from "./utils.js";
 
@@ -15,12 +14,13 @@ if (fs.existsSync(configPath)) {
   config = JSON.parse(raw);
 }
 
-// Initialize data storage folder
+// Ensure data folder exists
 ensureDataFolder();
 
-// Function to prompt for bot token if empty
+// Prompt for bot token if missing
 async function getBotToken() {
   if (config.botToken && config.botToken.trim() !== "") return config.botToken;
+
   process.stdout.write("Enter your Telegram Bot Token: ");
   return new Promise((resolve) => {
     process.stdin.once("data", (data) => {
@@ -37,7 +37,8 @@ async function main() {
 
     // Start Telegram bot
     const telegramBot = new TelegramBot(token, { polling: true });
-    await startTelegramBot(telegramBot, config);
+    // Import telegram_bot.js to start listeners automatically
+    await import("./telegram_bot.js");
 
     // Load existing WhatsApp sessions (if any)
     const sessions = loadAllSessions();
