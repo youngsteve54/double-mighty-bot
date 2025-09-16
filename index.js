@@ -5,42 +5,60 @@ import { startWhatsAppBot, loadAllSessions } from "./whatsapp_bot.js";
 import { ensureDataFolder } from "./utils.js";
 
 // --------------------
-// Load config.json safely
+// Config paths
 // --------------------
 const configPath = path.join(process.cwd(), "config.json");
 let config = {};
+
+// Load config.json if exists
 if (fs.existsSync(configPath)) {
-  const raw = fs.readFileSync(configPath, "utf-8");
-  config = JSON.parse(raw);
+  config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 }
 
 // Ensure data folder exists
 ensureDataFolder();
 
-// Prompt for bot token if missing
+// --------------------
+// Get Telegram Bot Token
+// --------------------
 async function getBotToken() {
   if (config.botToken && config.botToken.trim() !== "") return config.botToken;
 
-  process.stdout.write("Enter your Telegram Bot Token: ");
   return new Promise((resolve) => {
+    process.stdout.write("Enter your Telegram Bot Token: ");
+    process.stdin.resume();
     process.stdin.once("data", (data) => {
       const token = data.toString().trim();
+
+      if (!token) {
+        console.error("\nTelegram Bot Token not set! Exiting...");
+        process.exit(1);
+      }
+
+      // Save token to config.json for future runs
+      config.botToken = token;
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+      process.stdin.pause();
       resolve(token);
     });
   });
 }
 
+// --------------------
+// Main function
+// --------------------
 async function main() {
   try {
     const token = await getBotToken();
-    config.botToken = token;
 
     // Start Telegram bot
     const telegramBot = new TelegramBot(token, { polling: true });
-    // Import telegram_bot.js to start listeners automatically
+
+    // Start Telegram listeners
     await import("./telegram_bot.js");
 
-    // Load existing WhatsApp sessions (if any)
+    // Load existing WhatsApp sessions
     const sessions = loadAllSessions();
 
     // Start WhatsApp bot sessions
@@ -53,7 +71,9 @@ async function main() {
   }
 }
 
+// --------------------
 // Graceful shutdown
+// --------------------
 process.on("SIGINT", () => {
   console.log("\nShutting down Double Mighty Bot...");
   process.exit(0);
