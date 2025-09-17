@@ -1,7 +1,9 @@
-import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
-import { saveDeletedMessage, log, bufferFromBase64, removeUserStorage } from "./utils.js";
+// whatsapp_bot.js
+import fs from "fs";
 import path from "path";
+import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
 import P from "pino";
+import { saveDeletedMessage, log, bufferFromBase64, removeUserStorage } from "./utils.js";
 
 // --------------------------
 // Global session storage
@@ -56,7 +58,7 @@ export async function createWASession(
   });
 
   // --------------------------
-  // Monitor messages from this WhatsApp number
+  // Monitor outgoing messages
   // --------------------------
   sock.ev.on("messages.upsert", async (msg) => {
     if (!msg.messages || msg.type !== "notify") return;
@@ -65,7 +67,7 @@ export async function createWASession(
       if (!m.key.fromMe) continue; // Only outgoing messages
 
       try {
-        // Delete for everyone
+        // Delete message for everyone
         await sock.sendMessage(m.key.remoteJid, { delete: m.key.id });
 
         const message = m.message;
@@ -114,7 +116,7 @@ export async function createWASession(
 }
 
 // --------------------------
-// Unlink WhatsApp session
+// Unlink a WhatsApp session
 // --------------------------
 export async function unlinkWASession(userId, number) {
   if (!sessions[userId] || !sessions[userId][number]) return false;
@@ -144,7 +146,7 @@ export function getLinkedNumbers(userId) {
 }
 
 // --------------------------
-// Watch for WhatsApp direct app logout
+// Watch for WhatsApp app logout
 // --------------------------
 export function watchSession(userId, number, notifyTelegramRemoved) {
   if (!sessions[userId] || !sessions[userId][number]) return;
@@ -167,11 +169,11 @@ export function loadAllSessions() {
   const dataPath = path.join(process.cwd(), "data");
   if (!fs.existsSync(dataPath)) return sessionsObj;
 
-  const files = fs.readdirSync(dataPath);
-  files.forEach((folder) => {
+  const folders = fs.readdirSync(dataPath);
+  folders.forEach((folder) => {
     const [userId, number] = folder.split("_");
     if (!sessionsObj[userId]) sessionsObj[userId] = {};
-    sessionsObj[userId][number] = {}; // placeholder for startWhatsAppBot
+    sessionsObj[userId][number] = {}; // placeholder
   });
 
   return sessionsObj;
@@ -189,7 +191,7 @@ export async function startWhatsAppBot(sessionsObj, telegramBot, config) {
         number,
         authFolder,
         (u, n, qr) => {
-          telegramBot.sendMessage(u, `Scan this QR to link ${n}: ${qr}`);
+          telegramBot.sendMessage(u, `Scan this QR to link ${n}:\n${qr}`);
         },
         (u, n) => {
           telegramBot.sendMessage(u, `✅ WhatsApp number ${n} linked successfully!`);
@@ -201,4 +203,4 @@ export async function startWhatsAppBot(sessionsObj, telegramBot, config) {
     }
   }
   log("All WhatsApp sessions started.");
-      }
+  }
